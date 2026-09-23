@@ -1,0 +1,15 @@
+RewriteEngine On
+RewriteBase /tpq-madin-app/
+
+# Redirect semua request ke index.php (kecuali file/folder yang ada)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php?url=$1 [QSA,L]
+
+# Blokir akses langsung ke folder config & uploads (opsional)
+<FilesMatch "\.(sql|md|log)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+Options -Indexes

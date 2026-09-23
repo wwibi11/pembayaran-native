@@ -1,0 +1,33 @@
+# === Composer ===
+/vendor/
+composer.phar
+
+# === Uploads (file user) ===
+/uploads/*
+!/uploads/.gitkeep
+
+# === Config lokal (kalau ada kredensial) ===
+# /config/database.local.php
+
+# === Log & cache ===
+*.log
+/cache/
+/tmp/
+
+# === OS & Editor ===
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# === Environment ===
+.env
+.env.local
+
+# === Backup ===
+*.bak
+*.sql.gz
+*~
