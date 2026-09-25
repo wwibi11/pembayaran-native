@@ -85,17 +85,21 @@ $rataLama = fetchOne("
             </p>
         </div>
         <?php if (hasRole('admin')): ?>
-        <div class="mt-2 mt-md-0">
-            <a href="<?= BASE_URL ?>/kelas/edit/<?= $kelas['id'] ?>"
-               class="btn btn-sm btn-warning">
-                <i class="fas fa-edit"></i> Edit Kelas
-            </a>
-            <a href="<?= BASE_URL ?>/kenaikan?kelas=<?= $kelas['id'] ?>"
-               class="btn btn-sm btn-primary">
-                <i class="fas fa-arrow-up"></i> Naik Kelas Massal
-            </a>
-        </div>
-        <?php endif; ?>
+            <div class="mt-2 mt-md-0">
+                <a href="<?= BASE_URL ?>/kelas/edit/<?= $kelas['id'] ?>"
+                class="btn btn-sm btn-warning">
+                    <i class="fas fa-edit"></i> Edit Kelas
+                </a>
+                <a href="<?= BASE_URL ?>/kelas/anggota/<?= $kelas['id'] ?>"
+                class="btn btn-sm btn-success">
+                    <i class="fas fa-user-plus"></i> Kelola Anggota
+                </a>
+                <a href="<?= BASE_URL ?>/kenaikan?kelas=<?= $kelas['id'] ?>"
+                class="btn btn-sm btn-primary">
+                    <i class="fas fa-arrow-up"></i> Naik Kelas Massal
+                </a>
+            </div>
+            <?php endif; ?>
     </div>
 
     <!-- ============================================
