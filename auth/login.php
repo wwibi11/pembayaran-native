@@ -421,7 +421,7 @@ $showDemo = true;
 
             <div class="cred-row">
                 <span><span class="role-badge wali">Wali Santri</span></span>
-                <span class="value">wali@madin.id / wali123</span>
+                <span class="value">budi.wali@madin.id / budi.wali@madin.id</span>
             </div>
         </div>
         <?php endif; ?>

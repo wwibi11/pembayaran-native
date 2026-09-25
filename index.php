@@ -56,10 +56,12 @@ $role_access = [
     'admin' => ['*'],
     'kepala' => [
         'dashboard', 'santri', 'kelas', 'orang_tua', 'jenis_pembayaran',
-        'tagihan', 'pembayaran', 'kenaikan', 'laporan', 'riwayat'
+        'tagihan', 'pembayaran', 'kenaikan', 'laporan', 'riwayat',
+        'profil'   // ⭐ TAMBAH
     ],
     'wali' => [
-        'dashboard', 'anak', 'tagihan', 'pembayaran', 'riwayat'
+        'dashboard', 'anak', 'tagihan', 'pembayaran', 'riwayat','riwayat_kelas',
+        'profil'   // ⭐ TAMBAH
     ],
 ];
 
@@ -136,7 +138,7 @@ if (!in_array($action, $no_layout, true)) {
         // 5a. Whitelist modul yang BOLEH diakses wali
         $wali_modules = [
             'dashboard', 'anak', 'tagihan', 'pembayaran',
-            'riwayat', 'profil'
+            'riwayat', 'profil', 'riwayat_kelas'
         ];
 
         if (!in_array($module, $wali_modules, true)) {
