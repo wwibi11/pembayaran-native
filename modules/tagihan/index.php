@@ -17,7 +17,42 @@ $page     = max(1, (int) ($_GET['page'] ?? 1));
 $perPage  = 25;
 $offset   = ($page - 1) * $perPage;
 
+// ============================================
+// 🛡️ KEAMANAN: WALI HANYA LIHAT ANAK-ANAKNYA
+// ============================================
+$isWali  = hasRole('wali');
+$anakIds = [];
+
+if ($isWali) {
+    $userId = currentUser()['id'];
+
+    // Ambil semua ID santri yang terhubung ke wali ini
+    $anakIds = array_column(
+        fetchAll("
+            SELECT s.id 
+            FROM orang_tua ot
+            JOIN wali_santri ws ON ws.orang_tua_id = ot.id
+            JOIN santri s ON s.id = ws.santri_id
+            WHERE ot.user_id = ?
+        ", [$userId]),
+        'id'
+    );
+
+    // Kalau wali tidak punya anak terhubung
+    if (empty($anakIds)) {
+        $anakIds = [0]; // dummy biar query tidak error
+    }
+
+    // Kalau akses ?santri=X → cek apakah santri itu anaknya
+    if ($santriId > 0 && !in_array($santriId, $anakIds, true)) {
+        http_response_code(403);
+        exit('403 - Akses ditolak. Ini bukan anak Anda.');
+    }
+}
+
+// ============================================
 // Info santri (kalau filter by santri)
+// ============================================
 $infoSantri = null;
 if ($santriId > 0) {
     $infoSantri = fetchOne("
@@ -39,10 +74,24 @@ if ($santriId > 0) {
 $where  = "WHERE 1=1";
 $params = [];
 
-if ($santriId > 0) {
-    $where .= " AND t.santri_id = ?";
-    $params[] = $santriId;
+// 🛡️ FILTER WALI
+if ($isWali) {
+    if ($santriId > 0) {
+        $where .= " AND t.santri_id = ?";
+        $params[] = $santriId;
+    } else {
+        $ph = implode(',', array_fill(0, count($anakIds), '?'));
+        $where .= " AND t.santri_id IN ($ph)";
+        $params = array_merge($params, $anakIds);
+    }
+} else {
+    if ($santriId > 0) {
+        $where .= " AND t.santri_id = ?";
+        $params[] = $santriId;
+    }
 }
+
+// Filter lain
 if ($search) {
     $where .= " AND (s.nama LIKE ? OR s.nis LIKE ?)";
     $params[] = "%$search%";
@@ -96,29 +145,41 @@ $kelasList = fetchAll("SELECT id, nama_kelas FROM kelas WHERE is_active=1 ORDER 
 $jenisList = fetchAll("SELECT id, nama FROM jenis_pembayaran WHERE is_active=1 ORDER BY nama");
 
 // ============================================
-// Statistik
+// Statistik (role-aware)
 // ============================================
-if ($santriId > 0) {
-    $stat = fetchOne("
-        SELECT 
-            COUNT(*) AS total,
-            SUM(CASE WHEN status='belum_lunas' THEN 1 ELSE 0 END) AS belum,
-            SUM(CASE WHEN status='menunggu_verifikasi' THEN 1 ELSE 0 END) AS menunggu,
-            SUM(CASE WHEN status='lunas' THEN 1 ELSE 0 END) AS lunas,
-            COALESCE(SUM(CASE WHEN status='belum_lunas' THEN nominal END),0) AS total_tunggakan,
-            COALESCE(SUM(CASE WHEN status='lunas' THEN nominal END),0) AS total_lunas
-        FROM tagihan WHERE santri_id = ?
-    ", [$santriId]);
-} else {
-    $stat = [
-        'total'           => (int) fetchOne("SELECT COUNT(*) c FROM tagihan")['c'],
-        'belum'           => (int) fetchOne("SELECT COUNT(*) c FROM tagihan WHERE status='belum_lunas'")['c'],
-        'menunggu'        => (int) fetchOne("SELECT COUNT(*) c FROM tagihan WHERE status='menunggu_verifikasi'")['c'],
-        'lunas'           => (int) fetchOne("SELECT COUNT(*) c FROM tagihan WHERE status='lunas'")['c'],
-        'total_tunggakan' => (float) fetchOne("SELECT COALESCE(SUM(nominal),0) c FROM tagihan WHERE status='belum_lunas'")['c'],
-        'total_lunas'     => (float) fetchOne("SELECT COALESCE(SUM(nominal),0) c FROM tagihan WHERE status='lunas'")['c'],
-    ];
+$statWhere  = "WHERE 1=1";
+$statParams = [];
+
+if ($isWali && $santriId == 0) {
+    // Wali: statistik hanya anaknya
+    $ph = implode(',', array_fill(0, count($anakIds), '?'));
+    $statWhere .= " AND santri_id IN ($ph)";
+    $statParams = array_merge($statParams, $anakIds);
+} elseif ($santriId > 0) {
+    $statWhere .= " AND santri_id = ?";
+    $statParams[] = $santriId;
 }
+
+$stat = fetchOne("
+    SELECT 
+        COUNT(*) AS total,
+        SUM(CASE WHEN status='belum_lunas' THEN 1 ELSE 0 END) AS belum,
+        SUM(CASE WHEN status='menunggu_verifikasi' THEN 1 ELSE 0 END) AS menunggu,
+        SUM(CASE WHEN status='lunas' THEN 1 ELSE 0 END) AS lunas,
+        COALESCE(SUM(CASE WHEN status='belum_lunas' THEN nominal END),0) AS total_tunggakan,
+        COALESCE(SUM(CASE WHEN status='lunas' THEN nominal END),0) AS total_lunas
+    FROM tagihan
+    $statWhere
+", $statParams);
+
+$stat = [
+    'total'           => (int) ($stat['total'] ?? 0),
+    'belum'           => (int) ($stat['belum'] ?? 0),
+    'menunggu'        => (int) ($stat['menunggu'] ?? 0),
+    'lunas'           => (int) ($stat['lunas'] ?? 0),
+    'total_tunggakan' => (float) ($stat['total_tunggakan'] ?? 0),
+    'total_lunas'     => (float) ($stat['total_lunas'] ?? 0),
+];
 ?>
 
 <div class="container-fluid">
@@ -138,6 +199,8 @@ if ($santriId > 0) {
                     NIS: <?= e($infoSantri['nis']) ?>
                     · Kelas: <?= e($infoSantri['nama_kelas'] ?: '-') ?>
                     · <a href="<?= BASE_URL ?>/tagihan">Lihat semua tagihan</a>
+                <?php elseif ($isWali): ?>
+                    Daftar tagihan anak Anda
                 <?php else: ?>
                     Kelola tagihan santri & generate SPP massal
                 <?php endif; ?>
@@ -237,7 +300,7 @@ if ($santriId > 0) {
                        style="max-width:200px;" placeholder="Cari nama / NIS..."
                        value="<?= e($search) ?>">
 
-                <?php if (!$santriId): ?>
+                <?php if (!$santriId && !$isWali): ?>
                     <select name="kelas" class="form-control form-control-sm" style="max-width:150px;">
                         <option value="">Semua Kelas</option>
                         <?php foreach ($kelasList as $k): ?>
@@ -377,6 +440,11 @@ if ($santriId > 0) {
                                                data-confirm="Hapus tagihan ini?"
                                                title="Hapus">
                                                 <i class="fas fa-trash"></i>
+                                            </a>
+                                        <?php elseif (hasRole('wali') && $t['status'] === 'belum_lunas'): ?>
+                                            <a href="<?= BASE_URL ?>/pembayaran/upload/<?= (int) $t['id'] ?>"
+                                               class="btn btn-sm btn-success" title="Upload Bukti Bayar">
+                                                <i class="fas fa-upload"></i>
                                             </a>
                                         <?php endif; ?>
                                     </div>
