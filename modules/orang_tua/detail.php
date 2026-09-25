@@ -47,15 +47,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($santriIds)) {
             $errors[] = 'Pilih minimal satu santri.';
         } else {
-            db()->beginTransaction();
-            try {
-                $ok = 0;
-                foreach ($santriIds as $sid) {
-                    // Cek santri ada & belum terhubung ke ortu ini
-                    $ada = fetchOne("SELECT id FROM santri WHERE id = ?", [$sid]);
-                    $link = fetchOne("SELECT id FROM wali_santri WHERE orang_tua_id = ? AND santri_id = ?", [$id, $sid]);
+            // 🛡️ VALIDASI: Cek apakah santri sudah punya wali
+            foreach ($santriIds as $sid) {
+                $santri = fetchOne("SELECT nama FROM santri WHERE id = ?", [$sid]);
+                if (!$santri) continue;
 
-                    if ($ada && !$link) {
+                // Cek sudah terhubung ke ortu ini?
+                $link = fetchOne("
+                    SELECT id FROM wali_santri 
+                    WHERE orang_tua_id = ? AND santri_id = ?
+                ", [$id, $sid]);
+
+                if ($link) {
+                    $errors[] = "Santri \"{$santri['nama']}\" sudah terhubung dengan orang tua ini.";
+                    continue;
+                }
+
+                // Cek sudah punya wali (siapapun)?
+                $adaWali = (int) fetchColumn("
+                    SELECT COUNT(*) FROM wali_santri WHERE santri_id = ?
+                ", [$sid]);
+
+                if ($adaWali > 0) {
+                    // Cari siapa walinya
+                    $waliInfo = fetchOne("
+                        SELECT ot.nama_lengkap, ot.tipe
+                        FROM wali_santri ws
+                        JOIN orang_tua ot ON ot.id = ws.orang_tua_id
+                        WHERE ws.santri_id = ?
+                        LIMIT 1
+                    ", [$sid]);
+                    $namaWali = $waliInfo ? " ({$waliInfo['tipe']}: {$waliInfo['nama_lengkap']})" : '';
+                    $errors[] = "Santri \"{$santri['nama']}\" sudah memiliki wali{$namaWali}. Tidak bisa di-link lagi.";
+                }
+            }
+
+            if (empty($errors)) {
+                db()->beginTransaction();
+                try {
+                    $ok = 0;
+                    foreach ($santriIds as $sid) {
                         insert('wali_santri', [
                             'orang_tua_id' => $id,
                             'santri_id'    => $sid,
@@ -63,13 +94,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ]);
                         $ok++;
                     }
+                    db()->commit();
+                    setFlash('success', "$ok santri berhasil dihubungkan.");
+                    redirect("orang_tua/detail/$id");
+                } catch (Exception $e) {
+                    db()->rollBack();
+                    $errors[] = 'Gagal: ' . $e->getMessage();
                 }
-                db()->commit();
-                setFlash('success', "$ok santri berhasil dihubungkan.");
-                redirect("orang_tua/detail/$id");
-            } catch (Exception $e) {
-                db()->rollBack();
-                $errors[] = 'Gagal: ' . $e->getMessage();
             }
         }
     }
@@ -88,7 +119,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($aksi === 'toggle_primary') {
         $santriId = (int) ($_POST['santri_id'] ?? 0);
         if ($santriId > 0) {
-            // Toggle status is_primary untuk link ini
             $link = fetchOne("SELECT is_primary FROM wali_santri WHERE orang_tua_id = ? AND santri_id = ?", [$id, $santriId]);
             if ($link) {
                 execute("UPDATE wali_santri SET is_primary = ? WHERE orang_tua_id = ? AND santri_id = ?",
@@ -116,8 +146,11 @@ $anakList = fetchAll("
 ", [$id]);
 
 // ============================================
-// DAFTAR SANTRI YANG BELUM TERHUBUNG
-// (untuk pilihan di modal)
+// DAFTAR SANTRI YANG BISA DI-LINK
+// Syarat:
+// - Belum terhubung ke orang tua INI
+// - BELUM PUNYA WALI (siapapun) ← ⭐ ATURAN BARU
+// - Status: aktif / cuti
 // ============================================
 $santriTersedia = fetchAll("
     SELECT s.id, s.nis, s.nama, s.jenis_kelamin, s.status,
@@ -125,11 +158,11 @@ $santriTersedia = fetchAll("
     FROM santri s
     LEFT JOIN kelas k ON k.id = s.kelas_id
     WHERE s.id NOT IN (
-        SELECT santri_id FROM wali_santri WHERE orang_tua_id = ?
+        SELECT DISTINCT santri_id FROM wali_santri
     )
-    AND s.status IN ('aktif','cuti')
+    AND s.status IN ('aktif', 'cuti')
     ORDER BY s.nama ASC
-", [$id]);
+");
 
 // ============================================
 // TOTAL TUNGGAKAN
@@ -143,6 +176,17 @@ if (!empty($anakList)) {
         WHERE santri_id IN ($ph) AND status = 'belum_lunas'
     ", $anakIds);
 }
+
+// ============================================
+// STATISTIK: Santri total vs yang sudah punya wali
+// ============================================
+$totalSantriAktif = (int) fetchColumn("
+    SELECT COUNT(*) FROM santri WHERE status IN ('aktif','cuti')
+");
+$santriDenganWali = (int) fetchColumn("
+    SELECT COUNT(DISTINCT santri_id) FROM wali_santri
+");
+$santriTanpaWali = $totalSantriAktif - $santriDenganWali;
 ?>
 
 <div class="container-fluid">
@@ -514,11 +558,28 @@ if (!empty($anakList)) {
                     <div class="tab-pane fade show active" id="tab-existing" role="tabpanel">
                         <?php if (empty($santriTersedia)): ?>
                             <div class="text-center py-4 text-muted">
-                                <i class="fas fa-info-circle fa-2x mb-2"></i>
-                                <p class="mb-0">Semua santri aktif sudah terhubung dengan orang tua ini.</p>
-                                <p class="small">Gunakan tab <strong>"Input Santri Baru"</strong> untuk menambah santri.</p>
+                                <i class="fas fa-user-check fa-3x mb-3 text-success"></i>
+                                <h6>Semua Santri Sudah Punya Wali</h6>
+                                <p class="mb-2 small">
+                                    Tidak ada santri aktif yang bisa dihubungkan.
+                                    Setiap santri hanya boleh punya 1 wali.
+                                </p>
+                                <p class="small">
+                                    Gunakan tab <strong>"Input Santri Baru"</strong> untuk 
+                                    menambah santri baru.
+                                </p>
                             </div>
                         <?php else: ?>
+
+                            <!-- Info -->
+                            <div class="alert alert-info py-2 mb-3">
+                                <small>
+                                    <i class="fas fa-info-circle"></i>
+                                    Hanya menampilkan santri yang <strong>belum memiliki wali</strong>. 
+                                    Ada <strong><?= count($santriTersedia) ?></strong> santri tersedia.
+                                </small>
+                            </div>
+
                             <form method="POST" id="formLinkExisting">
                                 <input type="hidden" name="csrf" value="<?= generateCSRF() ?>">
                                 <input type="hidden" name="aksi" value="link_existing">
@@ -667,14 +728,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const checkAll = document.getElementById('checkAllSantri');
     if (checkAll) {
         checkAll.addEventListener('change', function() {
-            const visible = [];
             document.querySelectorAll('#tabelSantri tbody tr').forEach(tr => {
                 if (tr.style.display !== 'none') {
                     const cb = tr.querySelector('input[type=checkbox]');
-                    if (cb) {
-                        cb.checked = this.checked;
-                        visible.push(cb);
-                    }
+                    if (cb) cb.checked = this.checked;
                 }
             });
             updateCountSelected();
