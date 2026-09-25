@@ -1,45 +1,50 @@
 <?php
 // modules/users/delete.php
-
 require_once __DIR__ . '/../../config/functions.php';
 
-// Redirect jika bukan super admin
-if (!isSuperAdmin()) {
-    $_SESSION['error'] = 'Akses ditolak! Hanya Super Admin yang dapat menghapus user.';
-    redirect('index.php?url=dashboard');
-}
+if (!hasRole('admin')) { http_response_code(403); exit('Akses ditolak.'); }
 
-$id = $_GET['id'] ?? 0;
-if ($id <= 0) {
-    $_SESSION['error'] = 'ID user tidak valid!';
-    redirect('index.php?url=users');
-}
-
-// Ambil data user untuk ditampilkan di alert
-$user = fetchOne("SELECT name FROM users WHERE id = ?", [$id]);
+$id = (int) ($id ?? 0);
+$user = fetchOne("SELECT * FROM users WHERE id = ?", [$id]);
 
 if (!$user) {
-    $_SESSION['error'] = 'Data user tidak ditemukan!';
-    redirect('index.php?url=users');
+    setFlash('error', 'User tidak ditemukan.');
+    redirect('users');
 }
 
-// Cegah menghapus diri sendiri
-if ($id == $_SESSION['user']['id']) {
-    $_SESSION['error'] = 'Anda tidak dapat menghapus akun sendiri!';
-    redirect('index.php?url=users');
+// Proteksi: tidak bisa hapus diri sendiri
+if ($user['id'] == currentUser()['id']) {
+    setFlash('error', 'Tidak bisa menghapus akun sendiri.');
+    redirect('users');
+}
+
+// Proteksi: cek apakah sudah ada aktivitas
+$jmlUpload = (int) fetchColumn("SELECT COUNT(*) FROM pembayaran WHERE uploaded_by = ?", [$id]);
+$jmlVerif  = (int) fetchColumn("SELECT COUNT(*) FROM pembayaran WHERE verified_by = ?", [$id]);
+
+if ($jmlUpload > 0 || $jmlVerif > 0) {
+    setFlash('error', 
+        "Tidak bisa hapus. User sudah memiliki aktivitas ($jmlUpload upload, $jmlVerif verifikasi). " .
+        "Nonaktifkan saja untuk menonaktifkan akses."
+    );
+    redirect('users');
+}
+
+// Kalau user adalah wali, cek apakah terhubung ke orang tua
+$ortu = fetchOne("SELECT id FROM orang_tua WHERE user_id = ?", [$id]);
+if ($ortu) {
+    setFlash('error', 
+        "Tidak bisa hapus. User ini terhubung ke data orang tua. " .
+        "Lepas link dulu di menu Data Orang Tua."
+    );
+    redirect('users');
 }
 
 try {
-    // Hapus user menggunakan fungsi delete()
-    $deleted = delete('users', 'id = ?', [$id]);
-    
-    if ($deleted) {
-        $_SESSION['success'] = 'User "' . $user['name'] . '" berhasil dihapus!';
-    } else {
-        $_SESSION['error'] = 'Gagal menghapus data. Silakan coba lagi.';
-    }
+    execute("DELETE FROM users WHERE id = ?", [$id]);
+    setFlash('success', 'User "' . $user['name'] . '" berhasil dihapus.');
 } catch (Exception $e) {
-    $_SESSION['error'] = 'Error: ' . $e->getMessage();
+    setFlash('error', 'Gagal: ' . $e->getMessage());
 }
 
-redirect('index.php?url=users');
+redirect('users');

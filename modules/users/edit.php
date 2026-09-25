@@ -1,378 +1,224 @@
 <?php
 // modules/users/edit.php
-
-ob_start();
-
 require_once __DIR__ . '/../../config/functions.php';
 
-// Redirect jika bukan super admin
-if (!isSuperAdmin()) {
-    $_SESSION['error'] = 'Akses ditolak! Hanya Super Admin yang dapat mengedit user.';
-    redirect('index.php?url=dashboard');
-}
+if (!hasRole('admin')) { http_response_code(403); exit('Akses ditolak.'); }
 
-$id = $_GET['id'] ?? 0;
-if ($id <= 0) {
-    $_SESSION['error'] = 'ID user tidak valid!';
-    redirect('index.php?url=users');
-}
+$id = (int) ($id ?? 0);
+$row = fetchOne("SELECT * FROM users WHERE id = ?", [$id]);
+if (!$row) { setFlash('error', 'User tidak ditemukan.'); redirect('users'); }
 
-// Ambil data user
-$user = fetchOne("SELECT * FROM users WHERE id = ?", [$id]);
-
-if (!$user) {
-    $_SESSION['error'] = 'Data user tidak ditemukan!';
-    redirect('index.php?url=users');
-}
-
-$error = $_SESSION['error'] ?? null;
-$success = $_SESSION['success'] ?? null;
-unset($_SESSION['error'], $_SESSION['success']);
+$isSelf = ($row['id'] == currentUser()['id']);
+$errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['name'] ?? '');
-    $username = trim($_POST['username'] ?? '');
-    $email = trim($_POST['email'] ?? '');
-    $password = $_POST['password'] ?? '';
-    $password_confirm = $_POST['password_confirm'] ?? '';
-    $role = $_POST['role'] ?? 'staff';
-    $phone = trim($_POST['phone'] ?? '');
-    $address = trim($_POST['address'] ?? '');
-    $is_active = isset($_POST['is_active']) ? 1 : 0;
-    
-    $errors = [];
-    if (empty($name)) $errors[] = 'Nama wajib diisi';
-    if (empty($username)) $errors[] = 'Username wajib diisi';
-    if (empty($email)) $errors[] = 'Email wajib diisi';
-    if ($password && $password !== $password_confirm) $errors[] = 'Konfirmasi password tidak cocok';
-    if ($password && strlen($password) < 6) $errors[] = 'Password minimal 6 karakter';
-    if (!isValidEmail($email)) $errors[] = 'Format email tidak valid';
-    if (!empty($phone) && !isValidPhone($phone)) $errors[] = 'Format telepon tidak valid';
-    
-    // Cek username unik (kecuali dirinya sendiri)
-    if (empty($errors)) {
-        $check = fetchOne("SELECT id FROM users WHERE username = ? AND id != ?", [$username, $id]);
-        if ($check) $errors[] = 'Username "' . $username . '" sudah digunakan';
-    }
-    
-    if (empty($errors)) {
-        $check = fetchOne("SELECT id FROM users WHERE email = ? AND id != ?", [$email, $id]);
-        if ($check) $errors[] = 'Email "' . $email . '" sudah digunakan';
-    }
-    
-    if (empty($errors)) {
-        $data = [
-            'name' => $name,
-            'username' => $username,
-            'email' => $email,
-            'role' => $role,
-            'phone' => $phone,
-            'address' => $address,
-            'is_active' => $is_active
-        ];
-        
-        if ($password) {
-            $data['password'] = password_hash($password, PASSWORD_DEFAULT);
-        }
-        
-        $updated = updateData('users', $data, 'id', $id);
-        
-        if ($updated !== false) {
-            $_SESSION['success'] = 'User "' . $name . '" berhasil diperbarui!';
-            redirect('index.php?url=users');
-        } else {
-            $_SESSION['error'] = 'Gagal menyimpan data. Silakan coba lagi.';
-            redirect('index.php?url=users/edit&id=' . $id);
-        }
-    } else {
-        $_SESSION['error'] = implode('<br>', $errors);
-        redirect('index.php?url=users/edit&id=' . $id);
-    }
-}
+    checkCSRF($_POST['csrf'] ?? null);
 
-ob_end_flush();
+    $data = [
+        'name'      => trim($_POST['name'] ?? ''),
+        'email'     => trim($_POST['email'] ?? ''),
+        'phone'     => trim($_POST['phone'] ?? ''),
+        'role'      => $_POST['role'] ?? $row['role'],
+        'is_active' => isset($_POST['is_active']) ? 1 : 0,
+    ];
+
+    if ($data['name'] === '')  $errors[] = 'Nama wajib diisi.';
+    if (!filter_var($data['email'], FILTER_VALIDATE_EMAIL)) $errors[] = 'Format email tidak valid.';
+    if (!in_array($data['role'], ['admin','kepala','wali'])) $errors[] = 'Role tidak valid.';
+
+    // Cek duplikat email
+    if (!$errors) {
+        $dup = fetchOne("SELECT id FROM users WHERE email = ? AND id != ?", [$data['email'], $id]);
+        if ($dup) $errors[] = 'Email sudah dipakai user lain.';
+    }
+
+    // Proteksi: tidak bisa ubah role/nonaktifkan diri sendiri
+    if ($isSelf) {
+        if ($data['role'] !== $row['role']) {
+            $errors[] = 'Tidak bisa mengubah role sendiri.';
+        }
+        if (!$data['is_active']) {
+            $errors[] = 'Tidak bisa menonaktifkan akun sendiri.';
+        }
+    }
+
+    if (!$errors) {
+        try {
+            update('users', $data, 'id = ?', [$id]);
+
+            // Update phone di orang_tua juga kalau ada
+            if ($data['role'] === 'wali') {
+                execute("UPDATE orang_tua SET no_hp = ? WHERE user_id = ?", 
+                        [$data['phone'] ?: null, $id]);
+            }
+
+            setFlash('success', 'User berhasil diperbarui.');
+            redirect('users/detail/' . $id);
+        } catch (Exception $e) {
+            $errors[] = 'Gagal: ' . $e->getMessage();
+        }
+    }
+
+    $row = array_merge($row, $data);
+}
 ?>
 
-<style>
-/* ============================================
-   STYLE UNTUK HALAMAN EDIT USER
-   ============================================ */
-.card-form {
-    border: none;
-    border-radius: 12px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
-}
+<div class="container-fluid">
+    <div class="d-flex align-items-center mb-3">
+        <a href="<?= BASE_URL ?>/users" class="btn btn-sm btn-light mr-2">
+            <i class="fas fa-arrow-left"></i>
+        </a>
+        <div>
+            <h1 class="h4 mb-0 text-gray-800">
+                <i class="fas fa-user-edit text-warning"></i> Edit User
+            </h1>
+            <p class="text-muted mb-0" style="font-size:13px;">
+                <?= e($row['name']) ?> <?= $isSelf ? '(Anda sendiri)' : '' ?>
+            </p>
+        </div>
+    </div>
 
-.card-form .card-body {
-    padding: 24px 20px;
-}
+    <?php if ($errors): ?>
+        <div class="alert alert-danger">
+            <ul class="mb-0 pl-3">
+                <?php foreach ($errors as $er): ?><li><?= e($er) ?></li><?php endforeach; ?>
+            </ul>
+        </div>
+    <?php endif; ?>
 
-.card-form .card-header {
-    background: #ffffff;
-    border-bottom: 1px solid #eef2f7;
-    padding: 14px 20px;
-    border-radius: 12px 12px 0 0 !important;
-}
+    <?php if ($isSelf): ?>
+        <div class="alert alert-warning">
+            <i class="fas fa-info-circle"></i>
+            Anda sedang mengedit akun sendiri. Role &amp; status tidak bisa diubah untuk mencegah lockout.
+        </div>
+    <?php endif; ?>
 
-.card-form .card-header h6 {
-    font-weight: 600;
-    color: #1a2634;
-    margin: 0;
-    font-size: 14px;
-}
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card shadow">
+                <div class="card-body">
+                    <form method="POST">
+                        <input type="hidden" name="csrf" value="<?= generateCSRF() ?>">
 
-.form-label-custom {
-    font-weight: 600;
-    font-size: 12px;
-    color: #475569;
-    margin-bottom: 4px;
-    display: block;
-}
+                        <div class="form-row">
+                            <div class="form-group" style="flex:2;">
+                                <label>Nama Lengkap <span class="text-danger">*</span></label>
+                                <input type="text" name="name" class="form-control"
+                                       value="<?= e($row['name']) ?>" required>
+                            </div>
+                            <div class="form-group">
+                                <label>No. HP</label>
+                                <input type="text" name="phone" class="form-control"
+                                       value="<?= e($row['phone']) ?>">
+                            </div>
+                        </div>
 
-.form-label-custom .required {
-    color: #dc2626;
-}
+                        <div class="form-group">
+                            <label>Email <span class="text-danger">*</span></label>
+                            <input type="email" name="email" class="form-control"
+                                   value="<?= e($row['email']) ?>" required>
+                        </div>
 
-.form-control-custom,
-.form-select-custom {
-    border-radius: 8px;
-    border: 1px solid #e2e8f0;
-    padding: 8px 12px;
-    font-size: 13px;
-    background: #fafbfc;
-    transition: all 0.2s;
-    width: 100%;
-}
+                        <div class="form-group">
+                            <label>Role</label>
+                            <div class="row">
+                                <?php
+                                $roles = [
+                                    'admin'  => ['label' => '🔴 Admin',  'desc' => 'Akses penuh'],
+                                    'kepala' => ['label' => '🟡 Kepala', 'desc' => 'Lihat & laporan'],
+                                    'wali'   => ['label' => '🟢 Wali',   'desc' => 'Lihat anak & upload'],
+                                ];
+                                foreach ($roles as $key => $r):
+                                ?>
+                                    <div class="col-md-4">
+                                        <label class="d-block border rounded p-3"
+                                               style="cursor:pointer; <?= $isSelf ? 'opacity:0.5;' : '' ?>"
+                                               id="role_<?= $key ?>">
+                                            <input type="radio" name="role" value="<?= $key ?>"
+                                                   <?= $row['role']===$key?'checked':'' ?>
+                                                   <?= $isSelf ? 'disabled' : '' ?>
+                                                   onchange="pilihRole(this)">
+                                            <strong class="ml-1"><?= $r['label'] ?></strong>
+                                            <div class="small text-muted mt-1 ml-3"><?= $r['desc'] ?></div>
+                                        </label>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
 
-.form-control-custom:focus,
-.form-select-custom:focus {
-    border-color: #2563eb;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-    background: #ffffff;
-    outline: none;
-}
+                        <div class="form-group">
+                            <div class="custom-control custom-checkbox">
+                                <input type="checkbox" class="custom-control-input"
+                                       id="is_active" name="is_active" value="1"
+                                       <?= $row['is_active'] ? 'checked' : '' ?>
+                                       <?= $isSelf ? 'disabled' : '' ?>>
+                                <label class="custom-control-label" for="is_active">
+                                    <strong>Aktif</strong>
+                                </label>
+                            </div>
+                        </div>
 
-.form-text-custom {
-    font-size: 11px;
-    color: #94a3b8;
-    margin-top: 4px;
-}
-
-.alert-custom {
-    border-radius: 10px;
-    border: none;
-    padding: 12px 18px;
-    font-size: 13px;
-    border-left: 4px solid transparent;
-}
-
-.alert-custom.alert-success {
-    background: #dcfce7 !important;
-    color: #166534 !important;
-    border-left-color: #22c55e !important;
-}
-
-.alert-custom.alert-danger {
-    background: #fee2e2 !important;
-    color: #991b1b !important;
-    border-left-color: #dc2626 !important;
-}
-
-.btn-custom {
-    border-radius: 8px;
-    padding: 8px 20px;
-    font-size: 13px;
-    font-weight: 500;
-}
-
-.btn-custom-primary {
-    background: #2563eb;
-    color: #fff;
-    border: none;
-}
-
-.btn-custom-primary:hover {
-    background: #1d4ed8;
-    color: #fff;
-}
-
-.btn-custom-secondary {
-    background: #f1f5f9;
-    color: #475569;
-    border: 1px solid #e2e8f0;
-}
-
-.btn-custom-secondary:hover {
-    background: #e2e8f0;
-    color: #1e293b;
-}
-
-.users-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 15px;
-    margin-bottom: 20px;
-}
-
-.users-header .header-title h4 {
-    font-size: 18px;
-    font-weight: 700;
-    color: #1a2634;
-    margin: 0;
-}
-
-.users-header .header-title h4 i {
-    color: #2563eb;
-    margin-right: 10px;
-}
-
-.users-header .header-title .sub-title {
-    font-size: 13px;
-    color: #8a94a6;
-    margin-top: 2px;
-}
-
-@media (max-width: 768px) {
-    .users-header {
-        flex-direction: column;
-        align-items: stretch;
-    }
-}
-</style>
-
-<div class="container-fluid px-4">
-    <!-- ============================================
-    HEADER
-    ============================================ -->
-    <div class="users-header">
-        <div class="header-title">
-            <h4>
-                <i class="fas fa-user-edit"></i>
-                Edit User
-            </h4>
-            <div class="sub-title">
-                <i class="fas fa-chevron-right" style="font-size: 10px;"></i>
-                Edit data user: <span class="badge bg-secondary"><?= htmlspecialchars($user['username']) ?></span>
+                        <hr>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Perbarui
+                        </button>
+                        <a href="<?= BASE_URL ?>/users" class="btn btn-light">Batal</a>
+                        <a href="<?= BASE_URL ?>/users/reset_password/<?= $id ?>"
+                           class="btn btn-warning float-right">
+                            <i class="fas fa-key"></i> Reset Password
+                        </a>
+                    </form>
+                </div>
             </div>
         </div>
-        <a href="index.php?url=users" class="btn btn-custom btn-custom-secondary btn-sm">
-            <i class="fas fa-arrow-left me-1"></i> Kembali
-        </a>
-    </div>
 
-    <!-- ============================================
-    ALERT
-    ============================================ -->
-    <?php if ($success): ?>
-    <div class="alert alert-custom alert-success alert-dismissible fade show" role="alert">
-        <i class="fas fa-check-circle me-2"></i> <?= $success ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-    <?php endif; ?>
-
-    <?php if ($error): ?>
-    <div class="alert alert-custom alert-danger alert-dismissible fade show" role="alert">
-        <i class="fas fa-exclamation-circle me-2"></i> <?= $error ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-    <?php endif; ?>
-
-    <!-- ============================================
-    FORM
-    ============================================ -->
-    <div class="card card-form">
-        <div class="card-header">
-            <h6><i class="fas fa-user me-2"></i>Form Edit User</h6>
-        </div>
-        <div class="card-body">
-            <form method="POST">
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <div class="mb-3">
-                            <label class="form-label-custom">
-                                Nama Lengkap <span class="required">*</span>
-                            </label>
-                            <input type="text" name="name" class="form-control-custom" 
-                                   value="<?= htmlspecialchars($user['name']) ?>" required>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="mb-3">
-                            <label class="form-label-custom">
-                                Username <span class="required">*</span>
-                            </label>
-                            <input type="text" name="username" class="form-control-custom" 
-                                   value="<?= htmlspecialchars($user['username']) ?>" required>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="mb-3">
-                            <label class="form-label-custom">
-                                Email <span class="required">*</span>
-                            </label>
-                            <input type="email" name="email" class="form-control-custom" 
-                                   value="<?= htmlspecialchars($user['email']) ?>" required>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="mb-3">
-                            <label class="form-label-custom">Telepon</label>
-                            <input type="text" name="phone" class="form-control-custom" 
-                                   value="<?= htmlspecialchars($user['phone']) ?>" 
-                                   placeholder="08xxxxxxxxxx">
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="mb-3">
-                            <label class="form-label-custom">Password Baru</label>
-                            <input type="password" name="password" class="form-control-custom" 
-                                   placeholder="Kosongkan jika tidak diubah">
-                            <div class="form-text-custom">Minimal 6 karakter</div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="mb-3">
-                            <label class="form-label-custom">Konfirmasi Password</label>
-                            <input type="password" name="password_confirm" class="form-control-custom" 
-                                   placeholder="Ketik ulang password baru">
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="mb-3">
-                            <label class="form-label-custom">Role <span class="required">*</span></label>
-                            <select name="role" class="form-select-custom" required>
-                                <option value="admin" <?= $user['role'] == 'admin' ? 'selected' : '' ?>>Admin</option>
-                                <option value="staff" <?= $user['role'] == 'staff' ? 'selected' : '' ?>>Staff</option>
-                                <option value="super_admin" <?= $user['role'] == 'super_admin' ? 'selected' : '' ?>>Super Admin</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="mb-3 form-check mt-4">
-                            <input type="checkbox" name="is_active" class="form-check-input" id="is_active" 
-                                   <?= $user['is_active'] == 1 ? 'checked' : '' ?>>
-                            <label class="form-check-label" for="is_active">Akun Aktif</label>
-                        </div>
-                    </div>
-                    <div class="col-md-12">
-                        <div class="mb-3">
-                            <label class="form-label-custom">Alamat</label>
-                            <textarea name="address" class="form-control-custom" rows="2"><?= htmlspecialchars($user['address']) ?></textarea>
-                        </div>
-                    </div>
-                    <div class="col-12">
-                        <hr>
-                        <button type="submit" class="btn btn-custom btn-custom-primary">
-                            <i class="fas fa-save me-1"></i> Update
-                        </button>
-                        <a href="index.php?url=users" class="btn btn-custom btn-custom-secondary">
-                            <i class="fas fa-times me-1"></i> Batal
-                        </a>
-                    </div>
+        <div class="col-lg-4">
+            <div class="card shadow mb-3 border-info">
+                <div class="card-header py-2 bg-info text-white">
+                    <h6 class="m-0 font-weight-bold">
+                        <i class="fas fa-info-circle"></i> Ringkasan
+                    </h6>
                 </div>
-            </form>
+                <div class="card-body">
+                    <table class="table table-sm table-borderless mb-0">
+                        <tr>
+                            <td class="text-muted">ID</td>
+                            <td>#<?= $row['id'] ?></td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Role</td>
+                            <td>
+                                <span class="badge bg-<?= 
+                                    $row['role']==='admin' ? 'danger' : 
+                                    ($row['role']==='kepala' ? 'warning text-dark' : 'success') ?>">
+                                    <?= ucfirst($row['role']) ?>
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Dibuat</td>
+                            <td><small><?= date('d/m/Y H:i', strtotime($row['created_at'])) ?></small></td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Update</td>
+                            <td><small><?= date('d/m/Y H:i', strtotime($row['updated_at'])) ?></small></td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 </div>
+
+<script>
+function pilihRole(el) {
+    document.querySelectorAll('[id^="role_"]').forEach(l => {
+        l.classList.remove('border-primary', 'bg-light');
+    });
+    el.closest('label').classList.add('border-primary', 'bg-light');
+}
+document.addEventListener('DOMContentLoaded', function() {
+    const checked = document.querySelector('input[name="role"]:checked');
+    if (checked) pilihRole(checked);
+});
+</script>
