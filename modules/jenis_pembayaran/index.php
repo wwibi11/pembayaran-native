@@ -1,4 +1,4 @@
-\<?php
+<?php
 // modules/jenis_pembayaran/index.php
 require_once __DIR__ . '/../../config/functions.php';
 
