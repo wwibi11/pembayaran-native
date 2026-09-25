@@ -8,15 +8,23 @@ if (isLoggedIn()) {
     redirect('dashboard');
 }
 
-// Ambil nama aplikasi dari settings
-$app_name    = setting('nama_madin', 'TPQ MADIN');
-$app_version = '1.0.0';
-$logoPath    = setting('logo', 'assets/img/logo.png');
-$alamat      = setting('alamat', '');
-$telepon     = setting('telepon', '');
+// Ambil dari settings
+$app_name     = setting('nama_madin', 'TPQ MADIN');
+$app_version  = '1.0.0';
+$logoPath     = setting('logo', 'assets/img/logo.png');
+$alamat       = setting('alamat', '');
+$telepon      = setting('telepon', '');
+$emailMadin   = setting('email_madin', '');
+$tahunAjaran  = setting('tahun_ajaran', '');
 
 // Path relatif untuk aset (karena file ini di dalam /auth/)
 $base = '../';
+
+// Cek apakah logo ada
+$logoExists = $logoPath && file_exists(__DIR__ . '/../' . $logoPath);
+
+// Demo credentials (matikan di production: setting('mode_dev') === '1')
+$showDemo = true;
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -98,6 +106,15 @@ $base = '../';
         .login-header .sub-title {
             color: #6b7a8f;
             font-size: 14px;
+        }
+        .login-header .tahun-ajaran {
+            display: inline-block;
+            margin-top: 6px;
+            font-size: 11px;
+            color: #8a94a6;
+            background: #f8fafc;
+            padding: 2px 10px;
+            border-radius: 10px;
         }
         .divider-line {
             width: 50px;
@@ -272,10 +289,17 @@ $base = '../';
         .login-footer small {
             color: #8a94a6;
             font-size: 12px;
+            line-height: 1.6;
         }
         .login-footer .footer-brand {
             font-weight: 600;
             color: #2c6b9e;
+        }
+        .login-footer .footer-contact {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin: 0 4px;
         }
 
         @media (max-width: 576px) {
@@ -298,7 +322,7 @@ $base = '../';
 
         <!-- Icon / Logo -->
         <div class="login-icon">
-            <?php if ($logoPath && file_exists(__DIR__ . '/../' . $logoPath)): ?>
+            <?php if ($logoExists): ?>
                 <img src="<?= $base . e($logoPath) ?>" alt="Logo">
             <?php else: ?>
                 <i class="fas fa-mosque"></i>
@@ -307,11 +331,18 @@ $base = '../';
 
         <!-- Header -->
         <div class="login-header">
-            <span class="app-badge"><i class="fas fa-star"></i> TPQ &amp; Madin</span>
+            <span class="app-badge">
+                <i class="fas fa-star"></i> TPQ &amp; Madin
+            </span>
             <h3><?= e($app_name) ?></h3>
             <p class="sub-title">
                 <i class="fas fa-wallet"></i> Sistem Pembayaran &amp; Administrasi
             </p>
+            <?php if ($tahunAjaran): ?>
+                <span class="tahun-ajaran">
+                    <i class="fas fa-graduation-cap"></i> T.A. <?= e($tahunAjaran) ?>
+                </span>
+            <?php endif; ?>
             <div class="divider-line"></div>
         </div>
 
@@ -335,7 +366,7 @@ $base = '../';
                 <label>Email <span style="color:#dc2626;">*</span></label>
                 <div class="input-group-icon">
                     <input type="email" name="email" class="form-control"
-                           placeholder="nama@madin.id"
+                           placeholder="nama@email.com"
                            value="<?= e($_COOKIE['remember_email'] ?? '') ?>"
                            required autofocus>
                     <i class="fas fa-envelope input-icon"></i>
@@ -349,7 +380,8 @@ $base = '../';
                            class="form-control" placeholder="Masukkan password" required>
                     <i class="fas fa-lock input-icon"></i>
                     <button type="button" class="toggle-password"
-                            onclick="togglePassword()" tabindex="-1">
+                            onclick="togglePassword()" tabindex="-1"
+                            title="Lihat/sembunyikan password">
                         <i class="fas fa-eye" id="eyeIcon"></i>
                     </button>
                 </div>
@@ -361,7 +393,8 @@ $base = '../';
                            <?= isset($_COOKIE['remember_email']) ? 'checked' : '' ?>>
                     Ingat saya
                 </label>
-                <a href="#" class="forgot-link" onclick="alert('Hubungi admin untuk reset password.'); return false;">
+                <a href="#" class="forgot-link"
+                   onclick="alert('Hubungi admin untuk reset password.'); return false;">
                     Lupa password?
                 </a>
             </div>
@@ -372,6 +405,7 @@ $base = '../';
         </form>
 
         <!-- Info Akun Demo (HAPUS di production) -->
+        <?php if ($showDemo): ?>
         <div class="demo-credentials">
             <div class="demo-title"><i class="fas fa-key"></i> Akun Default</div>
 
@@ -390,6 +424,7 @@ $base = '../';
                 <span class="value">wali@madin.id / wali123</span>
             </div>
         </div>
+        <?php endif; ?>
 
         <!-- Footer -->
         <div class="login-footer">
@@ -399,11 +434,32 @@ $base = '../';
                 </span>
                 <br>
                 &copy; <?= date('Y'); ?> · Versi <?= e($app_version) ?>
+
                 <?php if ($alamat): ?>
-                    <br><i class="fas fa-map-marker-alt"></i> <?= e($alamat) ?>
+                    <br>
+                    <span class="footer-contact">
+                        <i class="fas fa-map-marker-alt"></i> <?= e($alamat) ?>
+                    </span>
                 <?php endif; ?>
-                <?php if ($telepon): ?>
-                    · <i class="fas fa-phone"></i> <?= e($telepon) ?>
+
+                <?php if ($telepon || $emailMadin): ?>
+                    <br>
+                    <?php if ($telepon): ?>
+                        <span class="footer-contact">
+                            <i class="fas fa-phone"></i>
+                            <a href="tel:<?= e($telepon) ?>" class="text-decoration-none" style="color:#8a94a6;">
+                                <?= e($telepon) ?>
+                            </a>
+                        </span>
+                    <?php endif; ?>
+                    <?php if ($emailMadin): ?>
+                        <span class="footer-contact">
+                            <i class="fas fa-envelope"></i>
+                            <a href="mailto:<?= e($emailMadin) ?>" class="text-decoration-none" style="color:#8a94a6;">
+                                <?= e($emailMadin) ?>
+                            </a>
+                        </span>
+                    <?php endif; ?>
                 <?php endif; ?>
             </small>
         </div>
@@ -433,6 +489,9 @@ $base = '../';
         const email = document.querySelector('input[name="email"]');
         const pass  = document.querySelector('input[name="password"]');
         if (email && email.value && pass) pass.focus();
+
+        // Fokus ke email kalau kosong
+        if (email && !email.value) email.focus();
     });
 </script>
 </body>

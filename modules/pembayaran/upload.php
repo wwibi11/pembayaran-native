@@ -122,8 +122,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         db()->beginTransaction();
         try {
             $userId = currentUser()['id'];
-            // Admin dengan cash → langsung diverifikasi
-            // Wali → menunggu verifikasi
             $status = $isAdminCash ? 'diverifikasi' : 'menunggu';
 
             $pembayaranId = insert('pembayaran', [
@@ -139,18 +137,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'verified_at'   => $isAdminCash ? date('Y-m-d H:i:s') : null,
             ]);
 
-            // Recalculate status tagihan
             recalculateTagihanStatus($old['tagihan_id']);
 
             db()->commit();
 
             if ($isAdminCash) {
                 setFlash('success', 'Pembayaran cash berhasil dicatat & diverifikasi.');
-                redirect('pembayaran/detail/' . $pembayaranId);
             } else {
                 setFlash('success', 'Bukti pembayaran berhasil diupload. Menunggu verifikasi admin.');
-                redirect('pembayaran/detail/' . $pembayaranId);
             }
+            redirect('pembayaran/detail/' . $pembayaranId);
 
         } catch (Exception $e) {
             db()->rollBack();
@@ -171,13 +167,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ", [$old['tagihan_id']]);
     }
 }
+
+// ============================================
+// DATA DARI SETTINGS (untuk panduan)
+// ============================================
+$namaMadin    = setting('nama_madin', 'TPQ MADIN');
+$alamatMadin  = setting('alamat', '');
+$teleponMadin = setting('telepon', '');
+$infoRekening = setting('info_rekening', '');
+$infoQris     = setting('info_qris', '');
+$infoCash     = setting('info_cash', '');
+$deadlineVerif= setting('deadline_verifikasi', '24');
 ?>
 
 <div class="container-fluid">
 
     <div class="d-flex align-items-center mb-3">
         <a href="<?= BASE_URL ?>/pembayaran/riwayat" class="btn btn-sm btn-light mr-2">
-            <i class="fas fa-arrow-left"></i>
+            <i class="fas fa-arrow-left"></i> 
         </a>
         <div>
             <h1 class="h4 mb-0 text-gray-800">
@@ -304,7 +311,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <small>
                                 <i class="fas fa-exclamation-triangle"></i>
                                 Pastikan nominal & bukti sesuai. Pembayaran akan diverifikasi admin 
-                                dalam 1x24 jam.
+                                dalam <strong><?= e($deadlineVerif) ?> jam</strong>.
                             </small>
                         </div>
 
@@ -322,29 +329,96 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
 
         <div class="col-lg-5">
+
+            <!-- ============================================
+                 PANDUAN DINAMIS
+                 ============================================ -->
             <div class="card shadow mb-3 border-info">
                 <div class="card-header py-2 bg-info text-white">
                     <h6 class="m-0 font-weight-bold">
-                        <i class="fas fa-info-circle"></i> Panduan
+                        <i class="fas fa-info-circle"></i> Panduan Pembayaran
                     </h6>
                 </div>
                 <div class="card-body small">
-                    <p class="mb-2"><strong>1. Pilih tagihan yang mau dibayar</strong></p>
+
+                    <!-- Step 1 -->
+                    <p class="mb-2">
+                        <strong>1. Pilih tagihan yang mau dibayar</strong>
+                    </p>
+
+                    <!-- Step 2 -->
                     <p class="mb-2"><strong>2. Transfer sesuai nominal</strong></p>
                     <ul class="pl-3 mb-3">
-                        <li>🏦 Transfer Bank: <strong>BCA 1234567890</strong> a.n. TPQ Madin</li>
-                        <li>📱 QRIS: Scan di kantor TPQ</li>
-                        <li>💵 Cash: Bayar langsung ke admin</li>
+                        <?php if ($infoRekening): ?>
+                            <li>🏦 <strong>Transfer Bank:</strong><br>
+                                <span class="text-primary"><?= e($infoRekening) ?></span>
+                            </li>
+                        <?php endif; ?>
+
+                        <?php if ($infoQris): ?>
+                            <li>📱 <strong>QRIS:</strong><br>
+                                <span class="text-primary"><?= e($infoQris) ?></span>
+                            </li>
+                        <?php endif; ?>
+
+                        <?php if ($infoCash): ?>
+                            <li>💵 <strong>Cash:</strong><br>
+                                <span class="text-primary"><?= e($infoCash) ?></span>
+                            </li>
+                        <?php endif; ?>
+
+                        <?php if (!$infoRekening && !$infoQris && !$infoCash): ?>
+                            <li class="text-muted">
+                                <em>Info rekening belum disetel. Hubungi admin.</em>
+                            </li>
+                        <?php endif; ?>
                     </ul>
+
+                    <!-- Step 3 -->
                     <p class="mb-2"><strong>3. Upload bukti</strong></p>
                     <ul class="pl-3 mb-3">
                         <li>Screenshot m-banking / struk ATM</li>
                         <li>Foto bukti QRIS</li>
+                        <li>Format: JPG, PNG, PDF (maks 5 MB)</li>
                     </ul>
-                    <p class="mb-0"><strong>4. Tunggu verifikasi</strong></p>
-                    <p class="mb-0 text-muted">Admin akan verifikasi dalam 1x24 jam.</p>
+
+                    <!-- Step 4 -->
+                    <p class="mb-1"><strong>4. Tunggu verifikasi</strong></p>
+                    <p class="mb-0 text-muted">
+                        Admin akan verifikasi dalam
+                        <strong><?= e($deadlineVerif) ?> jam</strong>.
+                    </p>
+
                 </div>
             </div>
+
+            <!-- ============================================
+                 INFO MADIN
+                 ============================================ -->
+            <div class="card shadow">
+                <div class="card-body small">
+                    <div class="d-flex align-items-center mb-2">
+                        <i class="fas fa-mosque text-primary mr-2" style="font-size:20px;"></i>
+                        <div>
+                            <strong><?= e($namaMadin) ?></strong>
+                            <?php if ($alamatMadin): ?>
+                                <div class="text-muted" style="font-size:11px;">
+                                    <?= e($alamatMadin) ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <?php if ($teleponMadin): ?>
+                        <div class="text-muted" style="font-size:12px;">
+                            <i class="fas fa-phone"></i> 
+                            <a href="tel:<?= e($teleponMadin) ?>" class="text-decoration-none">
+                                <?= e($teleponMadin) ?>
+                            </a>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -374,7 +448,7 @@ function updateInfo(sel) {
 }
 
 function pilihMetode(el) {
-    // Warna border
+    // Highlight border
     document.querySelectorAll('[id^="labelMetode"]').forEach(l => {
         l.classList.remove('border-primary', 'bg-light');
     });
