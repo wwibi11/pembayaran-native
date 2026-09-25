@@ -40,10 +40,13 @@ $module = $parts[0] ?: 'dashboard';
 $action = $parts[1] ?? 'index';
 $id     = $parts[2] ?? null;
 
-// Aksi tanpa layout (AJAX, delete, dll)
+// ============================================
+// AKSI TANPA LAYOUT (AJAX, DELETE, PROSES)
+// ============================================
+// Catatan: file di $no_layout ini WAJIB cek role sendiri di dalamnya.
 $no_layout = [
-    'delete', 'hapus', 'proses', 'ajax', 'download', 'export',
-    'verifikasi', 'tolak', 'approve', 'reject', 'store', 'update'
+    'delete', 'hapus', 'proses', 'ajax',
+    'download', 'export', 'store', 'update'
 ];
 
 // ============================================
@@ -60,17 +63,17 @@ $role_access = [
     ],
 ];
 
-// Modul yang HANYA bisa diakses admin (untuk semua action)
+// Modul yang HANYA bisa diakses admin (semua action)
 $admin_only_modules = ['users', 'settings', 'wali'];
 
 // Modul yang READ-ONLY untuk kepala, tapi CRUD khusus admin
-// (kepala boleh lihat, tapi tidak boleh create/edit/delete)
 $admin_write_modules = ['santri', 'orang_tua', 'jenis_pembayaran', 'kelas'];
 
 // Aksi yang dianggap "write" (hanya admin)
 $write_actions = [
     'create', 'edit', 'store', 'update', 'add', 'save',
-    'delete', 'hapus', 'generate', 'anggota', 'import'
+    'delete', 'hapus', 'generate', 'anggota', 'import',
+    'verifikasi'   // ⭐ TAMBAHAN: khusus admin
 ];
 
 // ============================================
@@ -112,7 +115,6 @@ if (!in_array($action, $no_layout, true)) {
     }
 
     // 3. Modul yang CRUD-nya hanya admin
-    //    (kepala boleh lihat, tapi tidak boleh create/edit/delete/anggota)
     if (in_array($module, $admin_write_modules, true)
         && in_array($action, $write_actions, true)
         && $role !== 'admin') {
@@ -126,22 +128,49 @@ if (!in_array($action, $no_layout, true)) {
         exit('403 - Kepala hanya bisa melihat data.');
     }
 
-    // 5. Wali: hanya boleh akses module yang diizinkan + tidak boleh write
+    // ============================================
+    // 5. WALI — WHITELIST MODUL & AKSI
+    // ============================================
     if ($role === 'wali') {
-        // Wali hanya boleh lihat, upload bukti bayar, dan lihat anaknya
-        $wali_allowed_write = ['upload', 'bayar', 'kirim', 'submit'];
+
+        // 5a. Whitelist modul yang BOLEH diakses wali
+        $wali_modules = [
+            'dashboard', 'anak', 'tagihan', 'pembayaran',
+            'riwayat', 'profil'
+        ];
+
+        if (!in_array($module, $wali_modules, true)) {
+            http_response_code(403);
+            exit('403 - Akses ditolak.');
+        }
+
+        // 5b. Whitelist action write yang boleh wali
+        // (upload bukti bayar, submit form, dll)
+        $wali_write_whitelist = ['upload', 'bayar', 'kirim', 'submit'];
 
         if (in_array($action, $write_actions, true)
-            && !in_array($action, $wali_allowed_write, true)) {
+            && !in_array($action, $wali_write_whitelist, true)) {
             http_response_code(403);
             exit('403 - Wali tidak bisa mengubah data ini.');
         }
 
-        // Wali tidak boleh akses modul kelola
-        if (in_array($module, ['santri', 'kelas', 'kenaikan', 'orang_tua'], true)) {
+        // 5c. Action khusus admin di modul pembayaran
+        // (create, verifikasi, proses, delete) → tolak untuk wali
+        $pembayaran_admin_only = ['create', 'verifikasi', 'proses', 'delete'];
+        if ($module === 'pembayaran' 
+            && in_array($action, $pembayaran_admin_only, true)) {
             http_response_code(403);
-            exit('403 - Akses ditolak.');
+            exit('403 - Hanya admin yang bisa mengakses halaman ini.');
         }
+    }
+
+    // ============================================
+    // 6. KEPALA — batasi action write di pembayaran
+    // ============================================
+    if ($role === 'kepala' && $module === 'pembayaran'
+        && in_array($action, ['create','verifikasi','proses','delete'], true)) {
+        http_response_code(403);
+        exit('403 - Kepala hanya bisa melihat data.');
     }
 }
 

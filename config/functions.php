@@ -228,3 +228,33 @@ function isAnakDariWali(int $santriId, int $userId): bool
         LIMIT 1
     ", [$santriId, $userId]);
 }
+
+// ============================================
+// PEMBAYARAN — Recalculate Status Tagihan
+// ============================================
+function recalculateTagihanStatus(int $tagihanId): void
+{
+    $tagihan = fetchOne("SELECT nominal FROM tagihan WHERE id = ?", [$tagihanId]);
+    if (!$tagihan) return;
+
+    $totalVerified = (float) fetchColumn("
+        SELECT COALESCE(SUM(nominal_bayar),0) FROM pembayaran
+        WHERE tagihan_id = ? AND status='diverifikasi'
+    ", [$tagihanId]);
+
+    // Cek ada pembayaran menunggu?
+    $adaMenunggu = (int) fetchColumn("
+        SELECT COUNT(*) FROM pembayaran
+        WHERE tagihan_id = ? AND status='menunggu'
+    ", [$tagihanId]);
+
+    if ($totalVerified >= (float) $tagihan['nominal']) {
+        $status = 'lunas';
+    } elseif ($adaMenunggu > 0) {
+        $status = 'menunggu_verifikasi';
+    } else {
+        $status = 'belum_lunas';
+    }
+
+    update('tagihan', ['status' => $status], 'id = ?', [$tagihanId]);
+}
